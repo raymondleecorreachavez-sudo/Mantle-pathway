@@ -1,43 +1,162 @@
-import numpy as np
-from pydantic import BaseModel, field_validator
+"""
+Data structures and models for GMC Anisotropic Velocity Correction.
+"""
 
-class BaseStiffnessTensor(BaseModel):
-    matrix: list[list[float]]
-    density: float
+from dataclasses import dataclass
+from typing import Dict, Optional
 
-    @field_validator('matrix')
+
+@dataclass
+class SlabTensorProfile:
+    """
+    Represents a slab tensor stiffness profile for anisotropic velocity correction.
+    
+    Attributes
+    ----------
+    bulk_modulus : float
+        Bulk modulus modified by acoustic phonon injection (GPa).
+    density_ringwoodite : float
+        Density of ringwoodite phase (kg/m³).
+    name : str, optional
+        Descriptive name for this profile (e.g., "Kuril-Kamchatka_Ring_of_Fire").
+    reference : str, optional
+        Citation or reference for this profile's data.
+    """
+    bulk_modulus: float
+    density_ringwoodite: float
+    name: Optional[str] = None
+    reference: Optional[str] = None
+    
+    def to_dict(self) -> Dict[str, float]:
+        """Convert profile to dictionary format."""
+        return {
+            'bulk_modulus': self.bulk_modulus,
+            'density_ringwoodite': self.density_ringwoodite
+        }
+    
     @classmethod
-    def validate_dimensions(cls, v):
-        arr = np.array(v)
-        if arr.shape != (6, 6):
-            raise ValueError("Stiffness matrix must be exactly 6x6.")
-        if not np.allclose(arr, arr.T, atol=1e-8):
-            raise ValueError("Stiffness matrix must be symmetric (C_ij = C_ji).")
-        return v
+    def from_dict(cls, data: Dict) -> 'SlabTensorProfile':
+        """Create profile from dictionary."""
+        return cls(
+            bulk_modulus=data['bulk_modulus'],
+            density_ringwoodite=data['density_ringwoodite'],
+            name=data.get('name'),
+            reference=data.get('reference')
+        )
 
-    def to_numpy(self) -> np.ndarray:
-        return np.array(self.matrix)
 
-class HexagonalTensor(BaseStiffnessTensor):
-    @field_validator('matrix')
-    @classmethod
-    def validate_hexagonal(cls, v):
-        arr = np.array(v)
-        # Check C12 = C11 - 2*C66
-        if not np.isclose(arr[0, 1], arr[0, 0] - 2 * arr[5, 5]):
-            raise ValueError("Hexagonal symmetry requires C12 = C11 - 2*C66")
-        return v
+@dataclass
+class SeismicStation:
+    """
+    Represents a seismic monitoring station.
+    
+    Attributes
+    ----------
+    name : str
+        Station identifier (e.g., "STATION_001").
+    latitude : float
+        Station latitude in degrees (-90 to 90).
+    longitude : float
+        Station longitude in degrees (-180 to 180).
+    elevation : float
+        Station elevation in kilometers.
+    """
+    name: str
+    latitude: float
+    longitude: float
+    elevation: float
+    
+    def get_coords(self) -> tuple:
+        """Return coordinates as (lat, lon, elev) tuple."""
+        return (self.latitude, self.longitude, self.elevation)
 
-class OrthorhombicTensor(BaseStiffnessTensor):
-    pass # Standard 6x6 validation from base is sufficient for structural layout
 
-class CubicTensor(BaseStiffnessTensor):
-    @field_validator('matrix')
-    @classmethod
-    def validate_cubic(cls, v):
-        arr = np.array(v)
-        if not (arr[0,0] == arr[1,1] == arr[2,2]):
-            raise ValueError("Cubic symmetry requires C11 = C22 = C33")
-        if not (arr[3,3] == arr[4,4] == arr[5,5]):
-            raise ValueError("Cubic symmetry requires C44 = C55 = C66")
-        return v
+@dataclass
+class SeismicEvent:
+    """
+    Represents a seismic event with arrival time data at multiple stations.
+    
+    Attributes
+    ----------
+    event_id : str
+        Unique event identifier.
+    arrival_times : Dict[str, float]
+        Station name to arrival time (seconds) mapping.
+    slab_profile : SlabTensorProfile
+        Tensor profile for velocity correction.
+    magnitude : Optional[float]
+        Event magnitude (Richter scale, if available).
+    """
+    event_id: str
+    arrival_times: Dict[str, float]
+    slab_profile: SlabTensorProfile
+    magnitude: Optional[float] = None
+    
+    def get_profile_dict(self) -> Dict:
+        """Get profile as dictionary."""
+        return self.slab_profile.to_dict()
+
+
+# Pre-defined regional slab tensor profiles
+RING_OF_FIRE_PROFILE = SlabTensorProfile(
+    bulk_modulus=260.0,
+    density_ringwoodite=3950.0,
+    name="Ring_of_Fire_Composite",
+    reference="GMC Research 2024"
+)
+
+KURIL_KAMCHATKA_PROFILE = SlabTensorProfile(
+    bulk_modulus=265.0,
+    density_ringwoodite=3920.0,
+    name="Kuril_Kamchatka_Trench",
+    reference="GMC Research 2024"
+)
+
+MARIANA_PROFILE = SlabTensorProfile(
+    bulk_modulus=270.0,
+    density_ringwoodite=3980.0,
+    name="Mariana_Trench",
+    reference="GMC Research 2024"
+)
+
+TONGA_KERMADEC_PROFILE = SlabTensorProfile(
+    bulk_modulus=255.0,
+    density_ringwoodite=3910.0,
+    name="Tonga_Kermadec_Trench",
+    reference="GMC Research 2024"
+)
+
+# Mapping of subduction zone names to profiles
+REGIONAL_PROFILES = {
+    'ring_of_fire': RING_OF_FIRE_PROFILE,
+    'kuril_kamchatka': KURIL_KAMCHATKA_PROFILE,
+    'mariana': MARIANA_PROFILE,
+    'tonga_kermadec': TONGA_KERMADEC_PROFILE,
+}
+
+
+def get_profile_by_region(region_name: str) -> SlabTensorProfile:
+    """
+    Get a pre-defined slab tensor profile by region name.
+    
+    Parameters
+    ----------
+    region_name : str
+        Region name (case-insensitive). Options: 'ring_of_fire', 'kuril_kamchatka', 'mariana', 'tonga_kermadec'.
+    
+    Returns
+    -------
+    SlabTensorProfile
+        The corresponding tensor profile.
+    
+    Raises
+    ------
+    KeyError
+        If region_name is not found.
+    """
+    region_key = region_name.lower().strip()
+    if region_key not in REGIONAL_PROFILES:
+        available = ", ".join(REGIONAL_PROFILES.keys())
+        raise KeyError(f"Region '{region_name}' not found. Available: {available}")
+    
+    return REGIONAL_PROFILES[region_key]
